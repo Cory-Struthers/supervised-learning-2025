@@ -52,21 +52,12 @@ Let's start by looking at how many cases the Supreme Court has decided over time
 
 library(remotes)
 library(LiblineaR)
-#Sys.setenv(GITHUB_PAT = "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")
-#devtools::install_github("EmilHvitfeldt/scotus")
-
 library(tidyverse)
 library(tidymodels)
 library(textrecipes)
 library(readit)
 library(ranger)
 library(ggplot2)
-#library(scotus)
-
-#scotus_filtered<-scotus_filtered %>%
- # as_tibble()
-
-#write.csv(scotus_filtered, "scotus_filtered.csv")
 
 scotus_filtered<-readit("scotus_filtered.csv")
 
