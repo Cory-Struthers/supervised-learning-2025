@@ -298,6 +298,3 @@ collect_predictions(rf_rs) %>%
 
 5. Finally, discuss: what worked and what didn't, and why? Explain the similarities and differences between your two approaches and what you learned.
 
-Optional: In this module we used a linear SVM (regression mode) to predict the year (continuous) a SCOTUS opinion was written. On your own, run a logistic regression on the binary outcome - whether the SCOTUS opinion was written before or after 2000. Compare this to a null model. Evaluate the models - ROC AUC, accuracy **Note - in the module we evaluated model performance using RMSE because the outcome was continuous (year of SCOTUS opinion). However, when using a logistic regression on a binary outcome (before or after 2000) you should evaluate model performance using ROC AUC (how well the model distinguishes between the classes) and accuracy (proportion of correctly classified observations). Discuss what you find - which terms were most predictive?
-
-
