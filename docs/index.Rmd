@@ -1,0 +1,312 @@
+---
+title: "Supervised Machine Learning for Text Data"
+subtitle: Introduction to Text as Data
+author: "Mieke Miner, Amber Boydstun, & Cory Struthers"
+date: "Fall 2025"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    code_folding: show
+    highlight: tango
+    theme: united
+    toc: yes
+    df_print: paged
+---
+
+```{r, setup, include=FALSE, echo=FALSE, message=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+knitr::opts_knit$set(root.dir = "~/Dropbox/text-as-data-JUST-CORY-AND-AMBER/modules_2024/data/")
+```
+
+### Introduction
+
+Supervised machine learning (SML) is a powerful way to make sense of text data, helping us predict outcomes, classify information, and uncover patterns. The idea is simple: we train a model using labeled data—where we already know the correct answers—so that it can learn to make accurate predictions on new, unseen text.
+
+There are several common machine learning techniques used for working with text, including these intro-level approaches:
+
+* **Naive Bayes:** a simple but effective approach often used for text classification.
+* **Support Vector Machines (SVM):** help separate different categories by finding the best decision boundary.
+* **Regularized Linear Models:** improve accuracy and handle large amounts of text features efficiently.
+* **Random Forest Models:** improve accuracy and reduce overfitting.
+
+When working with supervised models, we usually have one of three goals in mind:
+
+1. **Prediction** – Making the most accurate forecasts possible.
+2. **Inference** – Testing hypotheses and drawing conclusions from the data.
+3. **Description** – Summarizing key patterns in the text.
+
+This module was developed using [Supervised Machine Learning for Text Analysis in R](https://www.tidymodels.org/books/smltar/).
+
+
+
+### Regression
+
+We will use a sample of opinions from the United States Supreme Court, available in the scotus (Hvitfeldt 2019b) package.
+This data set contains the entire text of each opinion in the text column, along with the case_name, docket_number, and the year the case was decided by the Supreme Court.
+
+Let's start by looking at how many cases the Supreme Court has decided over time, by decade.
+
+```{r, message = FALSE, warning= FALSE}
+
+library(remotes)
+library(LiblineaR)
+#Sys.setenv(GITHUB_PAT = "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")
+#devtools::install_github("EmilHvitfeldt/scotus")
+
+library(tidyverse)
+library(tidymodels)
+library(textrecipes)
+library(readit)
+library(ranger)
+library(ggplot2)
+#library(scotus)
+
+#scotus_filtered<-scotus_filtered %>%
+ # as_tibble()
+
+#write.csv(scotus_filtered, "scotus_filtered.csv")
+
+scotus_filtered<-readit("scotus_filtered.csv")
+
+#plot SC decisions by decade
+scotus_filtered %>%
+  mutate(year = as.numeric(year),
+         year = 10 * (year %/% 10)) %>% #convert year into decades
+  count(year) %>%
+  ggplot(aes(year, n)) +
+  geom_col() +
+  labs(x = "Year", y = "Number of opinions per decade")
+
+```
+
+We can use supervised machine learning for lots of tasks. Here, we'll focus on predicting the year of a ruling based on its content. 
+
+Before applying an SML model, we have several steps to take. First, we pre-process the data.
+
+```{r}
+
+scotus_filtered<-scotus_filtered%>%filter(as.numeric(year)>=1980)
+
+#remove apostrophes (') from the text
+scotus_split <- scotus_filtered %>%
+  mutate(year = as.numeric(year),
+         text = str_remove_all(text, "'")) %>% 
+  initial_split() 
+```
+
+Next, we randomly split the data into one part for training (which defaults to 75%) and one part for testing (default: 25%).
+
+```{r}
+#from rsample package - randomly split data into training (75%) and testing sets (25%)
+scotus_train <- training(scotus_split)
+scotus_test <- testing(scotus_split)
+```
+
+Next, we'll specify what outcome variable we're trying to predict as a function of what explanatory variable. In this case, we'll specify our "recipe" as predicting year as a function of text. In this step we'll also tokenize the text, remove less frequent tokens, and apply TF-IDF and normalize the scores (a common approach when applying SML).
+
+```{r}
+#tokenize text of court opinions
+#filter to only keep top 1000 tokens by term frequency - less frequent words are probably too rare to be reliable
+#step_tfidf - weights each token frequency by the inverse document frequency
+#normalize (center and scale) these tf-idf values
+scotus_rec <- recipe(year ~ text, data = scotus_train) %>% 
+  step_tokenize(text) %>%
+  step_tokenfilter(text, max_tokens = 1e3) %>%
+  step_tfidf(text) %>% 
+  step_normalize(all_predictors())
+```
+
+The last step before applying our model is to create a workflow. In the `textrecipes` package, the `workflow` function does everything we need, but you can also separate out the component `prep` and `bake` steps if you want.
+
+```{r}
+### 
+#prep recipe to estimate all necessary parameters for each step using the training data
+#bake it to apply the steps to the data (like the training data, testing data, or new data at prediction time)
+#scotus_prep <- prep(scotus_rec)
+#scotus_bake <- bake(scotus_prep, new_data = NULL)
+
+#create a workflow to bundle recipe with model specifications we create later
+#first create empty workflow and add data preprocessor (scotus_rec) to it
+scotus_wf <- workflow() %>%
+  add_recipe(scotus_rec)
+
+scotus_wf
+
+```
+
+Now we get to pick a model and add it to our workflow! Let's start with an SVM model.
+
+```{r}
+
+#specify the model - build Support Vector Machine (SVM) model
+
+#set up model specification
+#model algorithm - linear SVM
+#mode - regression
+#computational engine - LiblineaR
+svm_spec <- svm_linear() %>%
+  set_mode("regression") %>%
+  set_engine("LiblineaR")
+
+#add model to workflow and fit to our training data
+svm_fit <- scotus_wf %>%
+  add_model(svm_spec) %>%
+  fit(data = scotus_train)
+```
+
+Let's examine the results from the SVM model.
+
+```{r}
+#look at results of SVM model - what terms contribute to SCOTUS opinions being written more recently
+#here Bias term = intercept
+svm_fit %>%
+  extract_fit_parsnip() %>%
+  tidy() %>%
+  arrange(-estimate)
+
+#look at results of SVM model - what terms contribute to SCOTUS opinions being written further in the past
+svm_fit %>%
+  extract_fit_parsnip() %>%
+  tidy() %>%
+  arrange(estimate)
+
+```
+
+A VERY important final step is to validate the model results. We do this by creating multiple sample datasets from our original data and then fitting our model to each one in order to see how well it performs.
+
+```{r, message = FALSE, warning= FALSE}
+
+#estimate SVM model performance by using resampled data sets built from the training set
+#create 10 fold cross-validation sets and use these resampled sets for performance estimates
+scotus_folds <- vfold_cv(scotus_train)
+
+#fit many times, once to each resampled folds, and evaluate on the heldout part of each resampled fold
+svm_rs <- fit_resamples(
+  scotus_wf %>% add_model(svm_spec),
+  scotus_folds,
+  control = control_resamples(save_pred = TRUE)
+)
+
+collect_metrics(svm_rs)
+# === Model Evaluation Rules of Thumb (Regression) ===
+# Look at RMSE (Root Mean Squared Error), MAE (Mean Absolute Error), and R-squared:
+# - RMSE: Lower is better; interpretable in same units as outcome (here: year). 
+#   Rule of thumb: compare to range of your outcome variable.
+#   e.g., if RMSE = 5 and years range from 1950 to 2020, error is ~5/70 = 7% of total range.
+# - MAE: Also lower is better; more robust to outliers.
+# - R² (not always reported): Closer to 1 means better fit; 0.7+ is often good, but context matters.
+```
+
+Graph!
+
+```{r, message = FALSE, warning= FALSE}
+
+#plot predicted against true years for SCOTUS opinions
+#lower RMSE is better - points will be closer to the dashed line
+svm_rs %>%
+  collect_predictions() %>%
+  ggplot(aes(year, .pred, color = id)) +
+  geom_abline(lty = 2, color = "gray80", size = 1.5) +
+  geom_point(alpha = 0.3) +
+  labs(
+    x = "Truth",
+    y = "Predicted year",
+    color = NULL,
+    title = "Predicted and true years for Supreme Court opinions",
+    subtitle = "Each cross-validation fold is shown in a different color"
+  )
+
+```
+
+Now let's compare the results of our SVM model with a very basic model that simply uses the mean year of court rulings in the data to predict the year of a given text. We'd certainly hope that our SVM model performs better.
+
+```{r}
+
+#compare to null model
+#use same function and preprocessing recipe but switch out SVM model specification with null model specification
+null_regression <- null_model() %>%
+  set_engine("parsnip") %>%
+  set_mode("regression")
+
+null_rs <- fit_resamples(
+  scotus_wf %>% add_model(null_regression),
+  scotus_folds,
+  metrics = metric_set(rmse)
+)
+
+#compare RMSE of null model to SVM model
+collect_metrics(null_rs)
+
+# === Rules of Thumb for Null Model Comparison ===
+# The null model just predicts the *mean* of the outcome variable (here, average year).
+# So, its RMSE is a baseline — any useful model should improve upon this.
+# Rule of thumb: if your model's RMSE is **much lower** than the null model's RMSE,
+# it’s capturing meaningful signal. If it's close, your model might be overfitting noise.
+```
+
+Finally, let's use a different model, this time a random forest model. We can compare the SVM and the random forest results. We see that while the random forest model is better in terms of overall fit (and RMSE), there's a disturbing drift toward less accurate predictions for cases from more recent years.
+
+```{r, message = FALSE, warning= FALSE}
+
+#compare to random forest model
+
+#build random forest model using ranger implementation
+rf_spec <- rand_forest(trees = 1000) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+
+#fit random forest model
+rf_rs <- fit_resamples(
+  scotus_wf %>% add_model(rf_spec),
+  scotus_folds,
+  control = control_resamples(save_pred = TRUE)
+)
+
+#compare random forest model RMSE to other models
+collect_metrics(rf_rs)
+```
+
+```{r, message = FALSE, warning= FALSE}
+
+#plot predictions from random forest model
+collect_predictions(rf_rs) %>%
+  ggplot(aes(year, .pred, color = id)) +
+  geom_abline(lty = 2, color = "gray80", size = 1.5) +
+  geom_point(alpha = 0.3) +
+  labs(
+    x = "Truth",
+    y = "Predicted year",
+    color = NULL,
+    title = paste("Predicted and true years for Supreme Court opinions using",
+                  "a random forest model", sep = "\n"),
+    subtitle = "Each cross-validation fold is shown in a different color"
+  )
+```
+
+
+---
+
+### Homework
+
+#### Discussion Question: 
+
+1. How should we think about meaningfully comparing models (e.g., how much improvement in RMSE is "enough")?
+
+
+#### Coding Questions
+
+1. Load a corpus of your choosing and apply a SML model to a variable of your choice. 
+
+2. Evaluate the model's performance, including through a graph and the RMSE.
+
+3. How might we interpret these results?
+
+4. Repeat Steps 1-3 but this time using a different model. 
+
+5. Finally, discuss: what worked and what didn't, and why? Explain the similarities and differences between your two approaches and what you learned.
+
+Optional: In this module we used a linear SVM (regression mode) to predict the year (continuous) a SCOTUS opinion was written. On your own, run a logistic regression on the binary outcome - whether the SCOTUS opinion was written before or after 2000. Compare this to a null model. Evaluate the models - ROC AUC, accuracy **Note - in the module we evaluated model performance using RMSE because the outcome was continuous (year of SCOTUS opinion). However, when using a logistic regression on a binary outcome (before or after 2000) you should evaluate model performance using ROC AUC (how well the model distinguishes between the classes) and accuracy (proportion of correctly classified observations). Discuss what you find - which terms were most predictive?
+
+
